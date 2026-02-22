@@ -1,6 +1,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/device.h>
-#include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/i2c.h>
 
 #include <modem/nrf_modem_lib.h>
 #include <modem/lte_lc.h>
@@ -12,36 +12,59 @@
 #include "power.h"
 #include "transport.h"
 
-static const struct device *accel = DEVICE_DT_GET(DT_NODELABEL(accel));
+/* ADXL367 register addresses */
+#define ADXL367_STATUS     0x0Bu
+#define ADXL367_X_DATA_H   0x0Eu
+#define ADXL367_DATA_RDY   BIT(0)
 
-/* Convert sensor_value (m/s²) to integer milliG */
-static int sensor_val_to_mg(const struct sensor_value *val)
+/* I2C bus + address from device tree (ADXL367 @ 0x1d on I2C2) */
+static const struct i2c_dt_spec accel_i2c = I2C_DT_SPEC_GET(DT_NODELABEL(accel));
+
+/*
+ * Read raw 14-bit accelerometer counts directly via I2C.
+ * Bypasses the Zephyr ADXL367 sensor driver (which has a 10x scale
+ * error in NCS v2.9) to get the rawest possible data.
+ *
+ * Output: signed 14-bit values in [-8192, +8191].
+ * At ±2g range, 1 LSB ≈ 250 µg (per ADXL367 datasheet).
+ */
+static int read_accel_raw(int16_t *x, int16_t *y, int16_t *z)
 {
-	/* micro_ms2 = value in micro-m/s² (millionths of m/s²) */
-	int64_t micro_ms2 = (int64_t)val->val1 * 1000000 + val->val2;
-
-	/* ADXL367 driver (NCS v2.9) has 10x scale error: divides by 10M
-	 * instead of 1M in adxl367_accel_convert(). Compensate here. */
-	return (int)(micro_ms2 * 10 / 9807);
-}
-
-static void read_accel(void)
-{
-	struct sensor_value x, y, z;
+	uint8_t status;
+	uint8_t buf[6];
 	int ret;
 
-	ret = sensor_sample_fetch(accel);
+	/* Poll STATUS register until DATA_RDY */
+	do {
+		ret = i2c_reg_read_byte_dt(&accel_i2c, ADXL367_STATUS, &status);
+		if (ret) {
+			return ret;
+		}
+	} while (!(status & ADXL367_DATA_RDY));
+
+	/* Burst read 6 bytes: X_H, X_L, Y_H, Y_L, Z_H, Z_L */
+	ret = i2c_burst_read_dt(&accel_i2c, ADXL367_X_DATA_H, buf, 6);
 	if (ret) {
-		printk("sensor_sample_fetch failed: %d\n", ret);
-		return;
+		return ret;
 	}
 
-	sensor_channel_get(accel, SENSOR_CHAN_ACCEL_X, &x);
-	sensor_channel_get(accel, SENSOR_CHAN_ACCEL_Y, &y);
-	sensor_channel_get(accel, SENSOR_CHAN_ACCEL_Z, &z);
+	/* Parse 14-bit signed values (high byte << 6 | low byte >> 2) */
+	*x = ((int16_t)buf[0] << 6) | (buf[1] >> 2);
+	if (*x & BIT(13)) {
+		*x |= 0xC000; /* sign-extend bits 14-15 */
+	}
 
-	printk("Accel: X=%d.%06d  Y=%d.%06d  Z=%d.%06d  (m/s2)\n",
-	       x.val1, x.val2, y.val1, y.val2, z.val1, z.val2);
+	*y = ((int16_t)buf[2] << 6) | (buf[3] >> 2);
+	if (*y & BIT(13)) {
+		*y |= 0xC000;
+	}
+
+	*z = ((int16_t)buf[4] << 6) | (buf[5] >> 2);
+	if (*z & BIT(13)) {
+		*z |= 0xC000;
+	}
+
+	return 0;
 }
 
 static int modem_connect(void)
@@ -109,17 +132,17 @@ static int modem_connect(void)
 
 int main(void)
 {
-	printk("\n=== Thingy:91 X — Accel + LTE + Supabase ===\n\n");
+	printk("\n=== Thingy:91 X — Raw Accel + LTE + Supabase ===\n\n");
 
 	/* Confirm MCUboot image so bootloader doesn't revert */
 	boot_write_img_confirmed();
 
-	/* --- Step 1: Accelerometer --- */
-	if (!device_is_ready(accel)) {
-		printk("ERROR: ADXL367 not ready!\n");
+	/* --- Step 1: Accelerometer I2C bus --- */
+	if (!i2c_is_ready_dt(&accel_i2c)) {
+		printk("ERROR: ADXL367 I2C bus not ready!\n");
 		return 0;
 	}
-	printk("ADXL367 accelerometer ready.\n");
+	printk("ADXL367 I2C bus ready (addr 0x%02x).\n", accel_i2c.addr);
 
 	/* --- Step 1b: Battery --- */
 	if (power_init() != 0) {
@@ -136,9 +159,15 @@ int main(void)
 		}
 	}
 
-	/* Show a few readings so the user can see it works */
+	/* Show a few raw readings at startup */
 	for (int i = 0; i < 5; i++) {
-		read_accel();
+		int16_t x, y, z;
+
+		if (read_accel_raw(&x, &y, &z) == 0) {
+			printk("Accel raw: x=%d  y=%d  z=%d  (counts)\n", x, y, z);
+		} else {
+			printk("Accel raw read failed\n");
+		}
 		k_msleep(100);
 	}
 
@@ -149,29 +178,22 @@ int main(void)
 	printk("Waiting for time sync...\n");
 	k_msleep(3000);
 
-	/* --- Step 3: POST readings to Supabase every 10 seconds --- */
-	printk("\n--- Posting accel + battery to Supabase every 10s ---\n");
+	/* --- Step 3: POST raw readings to Supabase every 10 seconds --- */
+	printk("\n--- Posting raw accel + battery to Supabase every 10s ---\n");
 
 	while (1) {
-		struct sensor_value x, y, z;
+		int16_t x, y, z;
 		int ret;
 
-		/* Read accelerometer */
-		ret = sensor_sample_fetch(accel);
+		/* Read raw accelerometer via I2C */
+		ret = read_accel_raw(&x, &y, &z);
 		if (ret) {
-			printk("sensor_sample_fetch failed: %d\n", ret);
+			printk("read_accel_raw failed: %d\n", ret);
 			k_msleep(10000);
 			continue;
 		}
-		sensor_channel_get(accel, SENSOR_CHAN_ACCEL_X, &x);
-		sensor_channel_get(accel, SENSOR_CHAN_ACCEL_Y, &y);
-		sensor_channel_get(accel, SENSOR_CHAN_ACCEL_Z, &z);
 
-		int x_mg = sensor_val_to_mg(&x);
-		int y_mg = sensor_val_to_mg(&y);
-		int z_mg = sensor_val_to_mg(&z);
-
-		printk("Accel: x=%d  y=%d  z=%d  (mg)\n", x_mg, y_mg, z_mg);
+		printk("Accel raw: x=%d  y=%d  z=%d  (counts)\n", x, y, z);
 
 		/* Read battery */
 		int32_t bat_mv = 0;
@@ -183,7 +205,7 @@ int main(void)
 		}
 
 		/* POST to Supabase */
-		transport_send_reading(x_mg, y_mg, z_mg, bat_mv);
+		transport_send_reading(x, y, z, bat_mv);
 
 		k_msleep(10000);
 	}

@@ -1,3 +1,4 @@
+#include <stdint.h>
 #include <zephyr/kernel.h>
 #include <modem/modem_key_mgmt.h>
 #include <net/rest_client.h>
@@ -61,7 +62,7 @@ int transport_init(void)
 	return 0;
 }
 
-int transport_send_reading(int x_mg, int y_mg, int z_mg, int battery_mv)
+int transport_send_reading(int16_t x_raw, int16_t y_raw, int16_t z_raw, int battery_mv)
 {
 	int err;
 	int64_t ts_ms;
@@ -77,14 +78,14 @@ int transport_send_reading(int x_mg, int y_mg, int z_mg, int battery_mv)
 	ts_sec = ts_ms / 1000;
 	gmtime_r(&ts_sec, &tm_buf);
 
-	/* Build JSON body — all integer formatting, no float printf needed */
+	/* Build JSON body — raw 14-bit counts, no conversion */
 	int len = snprintf(body_buf, sizeof(body_buf),
 		"{\"ts\":\"%04d-%02d-%02dT%02d:%02d:%02dZ\","
-		"\"x_mg\":%d,\"y_mg\":%d,\"z_mg\":%d,"
+		"\"x_raw\":%d,\"y_raw\":%d,\"z_raw\":%d,"
 		"\"battery_v\":%d.%03d}",
 		tm_buf.tm_year + 1900, tm_buf.tm_mon + 1, tm_buf.tm_mday,
 		tm_buf.tm_hour, tm_buf.tm_min, tm_buf.tm_sec,
-		x_mg, y_mg, z_mg,
+		x_raw, y_raw, z_raw,
 		battery_mv / 1000, battery_mv % 1000);
 
 	if (len < 0 || len >= (int)sizeof(body_buf)) {
