@@ -20,8 +20,9 @@ static int sensor_val_to_mg(const struct sensor_value *val)
 	/* micro_ms2 = value in micro-m/s² (millionths of m/s²) */
 	int64_t micro_ms2 = (int64_t)val->val1 * 1000000 + val->val2;
 
-	/* 1 g = 9806650 micro-m/s², so mg = micro_ms2 / 9807 */
-	return (int)(micro_ms2 / 9807);
+	/* ADXL367 driver (NCS v2.9) has 10x scale error: divides by 10M
+	 * instead of 1M in adxl367_accel_convert(). Compensate here. */
+	return (int)(micro_ms2 * 10 / 9807);
 }
 
 static void read_accel(void)
