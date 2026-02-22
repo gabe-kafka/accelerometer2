@@ -1,3 +1,4 @@
 build/
 firmware/build/
 .DS_Store
+.env

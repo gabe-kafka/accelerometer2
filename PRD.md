@@ -57,8 +57,8 @@ Enclosure:      Stock Thingy:91 (Phase 1), IP67 upgrade (Phase 2)
 ```
 Firmware:       Zephyr RTOS (nRF Connect SDK v2.9)
 Sample:         On-demand 3-axis accel read (every 10 sec)
-Processing:     Raw milliG conversion (integer math), no on-node FFT yet
-Transmit:       JSON: {ts, x_mg, y_mg, z_mg, battery_v} (~80 bytes)
+Processing:     None — raw 14-bit counts sent directly, normalize in post-processing
+Transmit:       JSON: {ts, x_raw, y_raw, z_raw, battery_v} (~85 bytes)
 Protocol:       HTTPS POST over LTE-M (Supabase REST API)
 Cloud:          Supabase (PostgreSQL + PostgREST) → Custom frontend dashboard
 ```

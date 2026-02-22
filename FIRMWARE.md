@@ -25,11 +25,8 @@
 ADXL367 (I2C)          nPM1300 (PMIC)
      │                       │
      ▼                       ▼
- sensor_value (m/s²)    battery_mv (int32)
-     │                       │
-     ▼                       │
- sensor_val_to_mg()          │
- (integer math)              │
+ raw 14-bit counts      battery_mv (int32)
+ (direct I2C read)           │
      │                       │
      ▼                       ▼
  ┌─────────────────────────────┐
@@ -57,11 +54,9 @@ firmware/
 ├── boards/
 │   └── thingy91x_nrf9151_ns.overlay # DTS: enable ADXL367
 ├── src/
-│   ├── main.c                       # Boot → accel → modem → POST loop
+│   ├── main.c                       # Boot → raw I2C accel → modem → POST loop
 │   ├── power.c / power.h            # nPM1300 battery voltage + percentage
 │   └── transport.c / transport.h    # TLS cert provisioning + HTTPS POST
-├── include/
-│   └── packet.h                     # (Legacy — feature packet struct)
 └── certs/
     └── GlobalSignRootCA.pem         # Root CA for Supabase TLS chain
 ```
@@ -75,23 +70,24 @@ firmware/
 ```
 Boot sequence:
   1. Confirm MCUboot image (prevent bootloader revert)
-  2. Init ADXL367 accelerometer (Zephyr sensor API)
+  2. ADXL367 driver inits sensor into measurement mode (via Zephyr)
   3. Init nPM1300 battery reads (power_init)
-  4. 5× demo accel readings (verify sensor works)
-  5. Init modem (nrf_modem_lib_init)
-  6. Provision TLS cert (transport_init) — before LTE connect
-  7. Read SIM ICCID + IMSI
-  8. Connect LTE-M (lte_lc_connect, blocking)
-  9. Print RSRP signal strength
-  10. Wait 3 sec for date_time sync
-  11. Enter POST loop (every 10 sec)
+  4. Init modem (nrf_modem_lib_init)
+  5. Provision TLS cert (transport_init) — before LTE connect
+  6. Read SIM ICCID + IMSI
+  7. Connect LTE-M (lte_lc_connect, blocking)
+  8. Print RSRP signal strength
+  9. Wait 3 sec for date_time sync
+  10. Enter POST loop (every 10 sec)
 
 POST loop (infinite):
-  1. Read ADXL367 → sensor_value (m/s²)
-  2. Convert to integer milliG (sensor_val_to_mg)
-  3. Read battery voltage (power_read_battery)
-  4. POST to Supabase (transport_send_reading)
-  5. Sleep 10 sec (k_msleep)
+  1. Read ADXL367 raw 14-bit registers via I2C (read_accel_raw)
+     - Poll STATUS register (0x0B) for DATA_RDY
+     - Burst read 6 bytes from X_DATA_H (0x0E)
+     - Parse 14-bit signed values with sign extension
+  2. Read battery voltage (power_read_battery)
+  3. POST raw counts to Supabase (transport_send_reading)
+  4. Sleep 10 sec (k_msleep)
 ```
 
 ### transport.c — TLS + HTTPS POST
@@ -103,10 +99,10 @@ transport_init():
   3. If mismatch or missing, write cert (modem_key_mgmt_write)
   Must be called after modem init, before LTE connect.
 
-transport_send_reading(x_mg, y_mg, z_mg, battery_mv):
+transport_send_reading(x_raw, y_raw, z_raw, battery_mv):
   1. Get wall-clock time via date_time_now()
   2. Format ISO-8601 timestamp with gmtime_r
-  3. Build JSON: {"ts":"...","x_mg":N,"y_mg":N,"z_mg":N,"battery_v":N.NNN}
+  3. Build JSON: {"ts":"...","x_raw":N,"y_raw":N,"z_raw":N,"battery_v":N.NNN}
   4. Set REST client headers (apikey, Content-Type, Prefer)
   5. rest_client_request() — blocking HTTPS POST
   6. Check HTTP status (expect 201 Created)
@@ -134,15 +130,16 @@ power_read_battery(int32_t *voltage_mv, uint8_t *pct):
 
 ```json
 {
-  "ts": "2026-02-22T21:17:41Z",
-  "x_mg": 0,
-  "y_mg": 2,
-  "z_mg": -92,
+  "ts": "2026-02-22T23:24:17Z",
+  "x_raw": -47,
+  "y_raw": 100,
+  "z_raw": -3673,
   "battery_v": 4.228
 }
 ```
 
-~80 bytes per POST. All integer formatting (no float printf needed).
+~85 bytes per POST. Raw 14-bit signed counts (range: -8192 to +8191).
+At ±2g range: 1 LSB = 250 µg → ~4000 counts = 1g.
 `battery_v` formatted as `millivolts / 1000 . millivolts % 1000`.
 
 ---
@@ -209,6 +206,7 @@ CONFIG_MAIN_STACK_SIZE=16384
 
 | Decision | Rationale |
 |----------|-----------|
+| Raw 14-bit I2C over Zephyr sensor API | Zephyr ADXL367 driver has 10x scale bug in NCS v2.9. Direct I2C reads preserve full 14-bit resolution; normalize in post-processing. |
 | Raw accel POST (no FFT) | Ship working product first. FFT can be layered on later. |
 | Integer-only JSON formatting | Avoids float printf libc dependencies on embedded Zephyr. |
 | Modem TLS offloading | nRF9151 handles TLS natively — saves ~50KB RAM vs app-side MbedTLS. |

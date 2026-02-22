@@ -3,4 +3,3 @@ find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
 project(hello_thingy91x)
 
 target_sources(app PRIVATE src/main.c src/power.c src/transport.c)
-target_include_directories(app PRIVATE include)

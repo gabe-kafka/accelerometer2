@@ -40,10 +40,24 @@ Progress
   - FFT/feature packets → raw accel + battery JSON
   - Build/flash instructions updated for nrfutil DFU
 
+- Discovered Zephyr ADXL367 driver 10x scale bug (NCS v2.9)
+  - adxl367_accel_convert() integer arithmetic divides by 10M instead of 1M
+  - Applied *10 compensation → readings went from ~91 mg to ~920 mg
+  - Remaining 8% gap: ADXL367 chip sensitivity tolerance (datasheet ±10%)
+
+- Bypassed Zephyr sensor API entirely — raw 14-bit I2C register reads
+  - read_accel_raw(): poll STATUS (0x0B), burst read 6 bytes from X_DATA_H (0x0E)
+  - Parse 14-bit signed values with sign extension
+  - Renamed Supabase columns: x_mg → x_raw, y_mg → y_raw, z_mg → z_raw
+  - Verified: x=-44, y=132, z=-3671 raw counts at rest, HTTP 201
+  - 1 LSB = 250 µg at ±2g range, normalize in post-processing
+
+- Repo cleanup: deleted legacy packet.h, updated docs for raw pipeline,
+  added .env to .gitignore, removed stale branches
+
 TODO
 ----
-- Investigate z-axis reading (~92 mg, expected ~1000 mg) — possible ADXL367 driver scale issue
-- Add battery_v column to Supabase table (ALTER TABLE accel_readings ADD COLUMN battery_v float)
+- Add LTE-M reconnect logic (modem drops after ~10 min, no retry in main loop)
 - Add PSM sleep between POST cycles to reduce power consumption
 - On-node FFT / feature extraction (future)
 - Frontend: display real-time accel + battery from Supabase

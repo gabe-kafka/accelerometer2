@@ -54,8 +54,8 @@
 The Thingy:91 X includes an onboard ADXL367 accelerometer connected to the nRF9151 via I2C. No hardware modifications are required — the stock platform is used as-is.
 
 **Data rate:** 3 axes × 14-bit — sampled on demand (once per 10-second POST cycle).
-**Driver:** Zephyr sensor API (`SENSOR_CHAN_ACCEL_X/Y/Z`), returns m/s².
-**Conversion:** m/s² → milliG via integer math: `mg = (val1 * 1000000 + val2) / 9807`
+**Interface:** Direct I2C register reads (bypass Zephyr sensor API due to 10x scale bug in NCS v2.9 driver).
+**Output:** Raw 14-bit signed counts. At ±2g range: 1 LSB = 250 µg, ~4000 counts = 1g. Normalization deferred to post-processing.
 
 → Satisfies SRS-101 through SRS-107
 
@@ -63,7 +63,7 @@ The Thingy:91 X includes an onboard ADXL367 accelerometer connected to the nRF91
 
 ## S2 — Processing
 
-**Current implementation:** No on-node signal processing. Raw tri-axial acceleration (in milliG) and battery voltage are sent directly to the cloud every 10 seconds. This "stream raw" approach prioritizes simplicity and fast time-to-field.
+**Current implementation:** No on-node signal processing. Raw tri-axial acceleration (14-bit counts) and battery voltage are sent directly to the cloud every 10 seconds. This "stream raw" approach prioritizes simplicity, accuracy, and fast time-to-field.
 
 **Future:** On-node FFT and feature extraction can be added later to reduce data volume and power consumption.
 
@@ -157,9 +157,9 @@ Total compliance must keep **mount first resonance ≥ 200 Hz** (SRS-602).
 CREATE TABLE accel_readings (
   id         BIGSERIAL PRIMARY KEY,
   ts         TIMESTAMPTZ NOT NULL,
-  x_mg       FLOAT,
-  y_mg       FLOAT,
-  z_mg       FLOAT,
+  x_raw      INT,
+  y_raw      INT,
+  z_raw      INT,
   battery_v  FLOAT
 );
 ```
@@ -182,7 +182,7 @@ CREATE TABLE accel_readings (
                │ connected, time synced
                ▼
          ┌──────────┐
-    ┌───►│  READ +  │ read accel (mg) + battery (mV)
+    ┌───►│  READ +  │ read accel (raw counts) + battery (mV)
     │    │  POST    │ HTTPS POST JSON to Supabase
     │    └─────┬────┘
     │          │ wait 10 sec
