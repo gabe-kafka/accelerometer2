@@ -60,4 +60,3 @@ TODO
 - Add LTE-M reconnect logic (modem drops after ~10 min, no retry in main loop)
 - Add PSM sleep between POST cycles to reduce power consumption
 - On-node FFT / feature extraction (future)
-- Frontend: display real-time accel + battery from Supabase
