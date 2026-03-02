@@ -9,15 +9,15 @@
 #include "transport.h"
 
 #define TLS_SEC_TAG	42
-#define SUPABASE_HOST	"rcaglkgoyemcjaszaahu.supabase.co"
+#define SUPABASE_HOST	"zjfyowshiwgandxdmbmo.supabase.co"
 #define SUPABASE_URL	"/rest/v1/accel_readings"
 #define SUPABASE_CONFIG_URL "/rest/v1/node_config"
 #define SUPABASE_PORT	443
 
 #define SUPABASE_ANON_KEY \
 	"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9." \
-	"eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJjYWdsa2dveWVtY2phc3phYWh1Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzE3MTcyNzcsImV4cCI6MjA4NzI5MzI3N30." \
-	"m2lz6wQIlv9PfuT7_DU4HZoBcCnK_kzXtJOAI7b6UV4"
+	"eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InpqZnlvd3NoaXdnYW5keGRtYm1vIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzI0ODgzMTIsImV4cCI6MjA4ODA2NDMxMn0." \
+	"NkV7MIkVGJlkK_qt3YxERog5qj6Hc5HPrTkuZyOsClY"
 
 /* GlobalSign Root CA — trust anchor for Supabase (via Google Trust Services) */
 static const char ca_cert[] = {
